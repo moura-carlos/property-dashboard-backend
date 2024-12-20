@@ -1,148 +1,122 @@
-// Import the mock data from mockData.js
-const { hosts, properties, cleaners, cleaningSessions } = require("./mockData");
+const knex = require("knex")(require("../knexfile").development); // Use Knex for PostgreSQL connection
 
 const resolvers = {
   // Define Query resolvers to fetch data
   Query: {
-    // Resolver for fetching filtered cleaning sessions
-    cleaningSessions: (_, { filter }) => {
-      let results = cleaningSessions; // Start with all cleaning sessions
+    // Fetch all cleaning sessions with optional filters
+    cleaningSessions: async (_, { filter }) => {
+      let query = knex("cleaning_sessions");
 
-      // Filter by propertyId if provided
       if (filter?.propertyId) {
-        results = results.filter(
-          (session) => session.propertyId === filter.propertyId
-        );
+        query = query.where("property_id", filter.propertyId);
       }
-
-      // Filter by cleanerId if provided
       if (filter?.cleanerId) {
-        results = results.filter(
-          (session) => session.cleanerId === filter.cleanerId
-        );
+        query = query.where("cleaner_id", filter.cleanerId);
       }
-      // Filter by date range if start and/or end is provided
       if (filter?.start) {
-        results = results.filter(
-          (session) => new Date(session.startTime) >= new Date(filter.start)
-        );
+        query = query.where("start_time", ">=", filter.start);
       }
       if (filter?.end) {
-        results = results.filter(
-          (session) => new Date(session.endTime) <= new Date(filter.end)
-        );
+        query = query.where("end_time", "<=", filter.end);
       }
 
-      return results;
+      return await query;
     },
 
-    // Resolver for fetching all hosts
-    hosts: () => hosts,
+    // Fetch all properties
+    properties: async () => {
+      return await knex("properties").select("*");
+    },
 
-    // Resolver for fetching all properties
-    properties: () => properties,
+    // Fetch all hosts
+    hosts: async () => {
+      return await knex("hosts").select("*");
+    },
 
-    // Resolver for fetching all cleaners
-    cleaners: () => cleaners,
-
-    // Resolver for fetching all cleaning sessions
-    cleaningSessions: () => cleaningSessions,
+    // Fetch all cleaners
+    cleaners: async () => {
+      return await knex("cleaners").select("*");
+    },
   },
 
   // Define relationships for the Host type
   Host: {
-    // Resolver to fetch properties belonging to a specific host
-    properties: (host) =>
-      // Filter properties where the hostId matches the current host's id
-      properties.filter((property) => property.hostId === host.id),
+    properties: async (host) => {
+      return await knex("properties").where("host_id", host.id);
+    },
   },
 
   // Define relationships for the Property type
   Property: {
-    // Resolver to fetch the host for a specific property
-    host: (property) =>
-      // Find the host where the host id matches the hostId of the property
-      hosts.find((host) => host.id === property.hostId),
+    host: async (property) => {
+      return await knex("hosts").where("id", property.host_id).first();
+    },
   },
 
   // Define relationships for the Cleaner type
   Cleaner: {
-    // Resolver to fetch cleaning sessions associated with a cleaner
-    cleaningSessions: (cleaner) =>
-      // Filter cleaning sessions where the session id is in the cleaner's cleaningSessions array
-      cleaningSessions.filter((session) =>
-        cleaner.cleaningSessions.includes(session.id)
-      ),
+    cleaningSessions: async (cleaner) => {
+      return await knex("cleaning_sessions").where("cleaner_id", cleaner.id);
+    },
   },
 
   // Define relationships for the CleaningSession type
   CleaningSession: {
-    // Resolver to fetch the property associated with a cleaning session
-    property: (session) =>
-      // Find the property where the property id matches the propertyId of the session
-      properties.find((property) => property.id === session.propertyId),
-
-    // Resolver to fetch the cleaner associated with a cleaning session
-    cleaner: (session) =>
-      // Find the cleaner where the cleaner id matches the cleanerId of the session
-      cleaners.find((cleaner) => cleaner.id === session.cleanerId),
+    startTime: (session) => session.start_time || new Date().toISOString(),
+    endTime: (session) => session.end_time || new Date().toISOString(),
+    property: async (session) => {
+      return await knex("properties").where("id", session.property_id).first();
+    },
+    cleaner: async (session) => {
+      return await knex("cleaners").where("id", session.cleaner_id).first();
+    },
   },
 
+  // Define Mutation resolvers
   Mutation: {
-    // Mutation to allow users to create new cleaning sessions.
-    logCleaningSession: (_, { input }) => {
-      // Generate a new ID
-      const newSession = {
-        id: (cleaningSessions.length + 1).toString(),
-        propertyId: input.propertyId,
-        cleanerId: input.cleanerId,
-        tasks: input.tasks,
-        startTime: input.startTime,
-        endTime: input.endTime,
-        notes: input.notes,
-      };
-
-      // Push the new session to the mock data array
-      cleaningSessions.push(newSession);
-
-      return newSession; // Return the newly created session
+    // Add a new cleaning session
+    logCleaningSession: async (_, { input }) => {
+      const [newSession] = await knex("cleaning_sessions")
+        .insert({
+          property_id: input.propertyId,
+          cleaner_id: input.cleanerId,
+          tasks: JSON.stringify(input.tasks), // Convert tasks array to JSON
+          start_time: input.startTime,
+          end_time: input.endTime,
+          notes: input.notes,
+        })
+        .returning("*");
+      return newSession;
     },
-    // Mutation to Update a Cleaning Session
-    updateCleaningSession: (_, { id, input }) => {
-      // Find the session to update
-      const sessionIndex = cleaningSessions.findIndex(
-        (session) => session.id === id
-      );
 
-      if (sessionIndex === -1) {
+    // Update a cleaning session
+    updateCleaningSession: async (_, { id, input }) => {
+      const [updatedSession] = await knex("cleaning_sessions")
+        .where("id", id)
+        .update({
+          property_id: input.propertyId,
+          cleaner_id: input.cleanerId,
+          tasks: JSON.stringify(input.tasks),
+          start_time: input.startTime,
+          end_time: input.endTime,
+          notes: input.notes,
+        })
+        .returning("*");
+
+      if (!updatedSession) {
         throw new Error(`CleaningSession with ID ${id} not found`);
       }
-
-      // Update the session with the new input
-      const updatedSession = {
-        ...cleaningSessions[sessionIndex],
-        ...input, // Merge old data with new data
-      };
-
-      cleaningSessions[sessionIndex] = updatedSession;
-
-      return updatedSession; // Return the updated session
+      return updatedSession;
     },
-    // Mutation to Delete a Cleaning Session
-    deleteCleaningSession: (_, { id }) => {
-      const initialLength = cleaningSessions.length;
 
-      // Find the index of the session to remove
-      const index = cleaningSessions.findIndex((session) => session.id === id);
-
-      if (index > -1) {
-        cleaningSessions.splice(index, 1); // Remove 1 element at the found index
-      }
-
-      return cleaningSessions.length < initialLength; // Return true if deletion was successful
+    // Delete a cleaning session
+    deleteCleaningSession: async (_, { id }) => {
+      const deletedCount = await knex("cleaning_sessions")
+        .where("id", id)
+        .del();
+      return deletedCount > 0; // Return true if a row was deleted
     },
   },
 };
 
-// Export the resolvers so they can be used in the Apollo Server
 module.exports = resolvers;
