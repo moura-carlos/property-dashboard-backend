@@ -13,12 +13,17 @@ module.exports = {
   },
   production: {
     client: "pg",
-    connection: process.env.DATABASE_URL, // Use DATABASE_URL (same variable) for production
+    connection: {
+      connectionString: process.env.DATABASE_URL, // Use Render's DATABASE_URL (same variable name) for production
+      ssl: {
+        rejectUnauthorized: false, // Allow self-signed certificates
+      },
+    },
     migrations: {
-      directory: "./migrations",
+      directory: "./src/migrations",
     },
     seeds: {
-      directory: "./seeds",
+      directory: "./src/seeds",
     },
   },
 };
